@@ -1,0 +1,35 @@
+services:
+  vllm-gemma:
+    # Default: pull the prebuilt image from GHCR (no source clone needed).
+    # Set IMAGE=local and run `./setup.sh && docker compose up -d --build`
+    # to build from source instead (e.g. to bump the vLLM commit pin).
+    image: ${IMAGE:-ghcr.io/nkhoit/arc-vllm:latest}
+    build:
+      context: ${VLLM_SRC:-./vllm}
+      dockerfile: docker/Dockerfile.xpu
+    container_name: vllm-gemma
+    restart: unless-stopped
+    network_mode: host
+    ipc: host
+    privileged: true            # required for Intel level-zero device access
+    devices:
+      - /dev/dri:/dev/dri
+    volumes:
+      - /dev/dri/by-path:/dev/dri/by-path
+      - ${HF_CACHE:-./hfcache}:/root/.cache/huggingface
+    environment:
+      - HF_TOKEN=${HF_TOKEN:-}
+      - VLLM_XPU_ENABLE_XPU_GRAPH=0   # XPU graphs still flaky on Battlemage
+    command:
+      # IMPORTANT: on Intel XPU only `compressed-tensors W4A16 INT` 4-bit
+      # kernels are merged. Classic AWQ models (`quant_method: awq`) crash
+      # with `awq_dequantize op missing`. The default model below is named
+      # "AWQ" but its config.json declares `quant_method: compressed-tensors`,
+      # which is why it works. See README for details.
+      - ${MODEL:-cyankiwi/gemma-4-E4B-it-AWQ-INT4}
+      - --enforce-eager
+      - --attention-backend=TRITON_ATTN
+      - --max-model-len=${MAX_MODEL_LEN:-32768}
+      - --gpu-memory-utilization=${GPU_MEM_UTIL:-0.88}
+      - --port=8000
+      - --host=0.0.0.0
